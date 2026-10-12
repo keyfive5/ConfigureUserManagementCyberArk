@@ -37,6 +37,13 @@ h2 { font-size: 19px; margin: 0 0 10px } h3 { font-size: 16px; margin: 16px 0 8p
 .tr { display: flex; align-items: center; gap: 8px }
 .pill { background: var(--card2); border: 1px solid var(--br); border-radius: 999px; padding: 4px 12px; font-size: 13px; color: var(--mut); white-space: nowrap }
 .pill.mid { color: var(--warn) } .pill.ok { color: var(--ok); border-color: var(--ok) }
+.acct { display: inline-flex; align-items: center; gap: 6px; background: var(--card2); border: 1px solid var(--br); color: var(--tx); height: 34px; border-radius: 10px; padding: 0 12px; cursor: pointer; font: inherit; font-size: 13.5px; font-weight: 600; white-space: nowrap; max-width: 170px }
+.acct .at { overflow: hidden; text-overflow: ellipsis }
+.acct:hover { border-color: var(--ac) } .acct.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 55%, var(--br)) }
+.card.signin { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-color: color-mix(in srgb, var(--ok) 50%, var(--br)); background: linear-gradient(135deg, var(--okbg), var(--card)) }
+.card.signin b { font-size: 16.5px; display: block; margin-bottom: 3px } .card.signin .btn { white-space: nowrap; flex: none }
+@media (max-width: 600px) { .card.signin { flex-direction: column; align-items: stretch } }
+.syncline { display: flex; gap: 8px; align-items: center; font-size: 13.5px; color: var(--ok); margin: 10px 0 0 }
 .iconbtn { background: var(--card2); border: 1px solid var(--br); color: var(--tx); width: 34px; height: 34px; border-radius: 10px; cursor: pointer; font-size: 16px }
 .foot { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: var(--mut); font-size: 13px; border-top: 1px solid var(--br); padding-top: 16px }
 @media (max-width: 760px) {
@@ -44,7 +51,7 @@ h2 { font-size: 19px; margin: 0 0 10px } h3 { font-size: 16px; margin: 16px 0 8p
   .tnav a { font-size: 12.5px; padding: 6px 6px }
   body { padding-bottom: 58px } .logo { font-size: 15px } .top { justify-content: space-between; gap: 8px; backdrop-filter: none; -webkit-backdrop-filter: none; background: var(--bg) }
 }
-@media (max-width: 420px) { .rl { display: none } .logo .lt { font-size: 14px } .top { padding: 10px 12px } }
+@media (max-width: 420px) { .acct .at { display: none } .acct { padding: 0 10px } .rl { display: none } .logo .lt { font-size: 14px } .top { padding: 10px 12px } }
 
 /* ───────── buttons, cards ───────── */
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--card2); border: 1px solid var(--br); color: var(--tx); border-radius: 11px; padding: 10px 16px; cursor: pointer; font: inherit; font-size: 15px; font-weight: 600; text-decoration: none; transition: border-color .15s, transform .15s }

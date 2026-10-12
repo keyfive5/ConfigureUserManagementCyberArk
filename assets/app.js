@@ -1,15 +1,25 @@
 /* User Management Lab - app engine.
-   Plain browser JS, no build step, no dependencies. Progress lives in localStorage. */
+   Plain browser JS, no build step, no dependencies. Progress lives in localStorage,
+   and syncs to the learner's account when they sign in (see sync.js). */
 
 /* ───────────── state ───────────── */
 const LSKEY = "umlab_v1";
 let S = (() => { try { return JSON.parse(localStorage.getItem(LSKEY)) || {}; } catch (e) { return {}; } })();
-S.f = S.f || {};            // per-family stats {n,c,box,lastTs,lastOk,okV:[],mis,lastV}
-S.lessons = S.lessons || {}; // {O1: timestamp}
-S.exams = S.exams || [];     // [{when,score,n,correct,byObj,cal}]
-S.cal = S.cal || { sc: 0, sw: 0, uc: 0, uw: 0 }; // sure/unsure x correct/wrong
-S.lab = S.lab || {};         // {M1: timestamp}
-const save = () => { try { localStorage.setItem(LSKEY, JSON.stringify(S)); } catch (e) {} };
+/* A random id for this browser, so confidence counters from different devices can be
+   merged without double counting. Kept outside S so syncing never overwrites it. */
+const DEV = (() => { try { let d = localStorage.getItem("umlab_dev"); if (!d) { d = Math.random().toString(36).slice(2, 10); localStorage.setItem("umlab_dev", d); } return d; } catch (e) { return "local"; } })();
+function normalizeState() {
+  S.f = S.f || {};            // per-family stats {n,c,box,lastTs,lastOk,okV:[],mis,lastV}
+  S.lessons = S.lessons || {}; // {O1: timestamp}
+  S.exams = S.exams || [];     // [{when,score,n,correct,byObj,cal}]
+  S.lab = S.lab || {};         // {M1: timestamp}
+  S.calDev = S.calDev || {};   // {deviceId: {sc,sw,uc,uw}} sure/unsure x correct/wrong
+  if (S.cal) { S.calDev[DEV] = S.cal; delete S.cal; }   // migrate the old single counter
+  S.calDev[DEV] = S.calDev[DEV] || { sc: 0, sw: 0, uc: 0, uw: 0 };
+}
+normalizeState();
+const saveLocal = () => { try { localStorage.setItem(LSKEY, JSON.stringify(S)); } catch (e) {} };
+const save = () => { saveLocal(); if (window.SYNC) SYNC.queue(); };
 
 const FAM = {}; QB.forEach(f => FAM[f.id] = f);
 const BYOBJ = {}; OBJECTIVES.forEach(o => BYOBJ[o.id] = QB.filter(f => f.o === o.id));
@@ -54,11 +64,13 @@ function record(id, vi, ok, sure) {
     if (sure) s.mis = true;
   }
   S.f[id] = s;
-  S.cal[(sure ? "s" : "u") + (ok ? "c" : "w")]++;
+  S.calDev[DEV][(sure ? "s" : "u") + (ok ? "c" : "w")]++;
   save(); header();
 }
 function calibration() {
-  const c = S.cal, sure = c.sc + c.sw, uns = c.uc + c.uw;
+  const c = { sc: 0, sw: 0, uc: 0, uw: 0 };
+  Object.values(S.calDev).forEach(d => { for (const k in c) c[k] += d[k] || 0; });
+  const sure = c.sc + c.sw, uns = c.uc + c.uw;
   return { sure, uns, sureAcc: sure ? c.sc / sure : null, unsAcc: uns ? c.uc / uns : null, danger: c.sw };
 }
 
@@ -260,6 +272,7 @@ routes.home = () => {
     </div>
     <div class="hr">${ring(r, 112, "Overall readiness")}<div class="mut sm">overall readiness</div></div>
   </section>
+  ${syncCard()}
   <div class="card next"><div><div class="eyebrow">Your next best step</div><b>${esc(ns.t)}</b><div class="mut sm">${esc(ns.d)}</div></div><a class="btn pri" href="${ns.h}">${esc(ns.b)} →</a></div>
   <div class="modes">
     <a class="mode" href="#/learn"><span class="ic">📘</span><b>Learn</b><small>${Object.keys(S.lessons).length}/10 lessons · teach first, then check</small></a>
@@ -282,6 +295,15 @@ routes.home = () => {
     <div class="card"><h2>How mastery works</h2><p class="mut sm">A fact counts as <b>mastered</b> after three confident correct answers in a row, in at least <b>two different wordings</b>. That's what beats paraphrased exam questions. A miss drops it back to zero, and the drill brings it back in new words a few questions later.</p></div>
   </div>`;
 };
+
+function syncCard() {
+  if (!window.SYNC || !SYNC.ready) return "";
+  if (SYNC.user) return `<div class="syncline"><span>☁</span><span data-sync-status>${esc(SYNC.statusText())}</span></div>`;
+  const has = Object.keys(S.f).length + Object.keys(S.lessons).length + Object.keys(S.lab).length + S.exams.length;
+  return `<div class="card signin"><div><b>${has ? "Don't lose your progress" : "Keep your progress on every device"}</b>
+    <div class="mut sm">Sign in with a free Puter account (the same one the PAM-DEF Trainer uses) and your lessons, mastery and exam history follow you to your phone and any computer. ${has ? "Everything you've done on this device so far is kept and uploaded." : ""}</div></div>
+    <button class="btn pri" data-act="acct">Sign in to save progress</button></div>`;
+}
 
 /* ───────────── learn ───────────── */
 routes.learn = (oid) => { if (oid && LESSONS[oid]) return lesson(oid); learnIndex(); };
@@ -491,7 +513,9 @@ routes.about = () => {
   <div class="card lesson"><p>Built by <b>M. Hasan Zafar</b> to master the <b>Configure User Management</b> content area of the CyberArk Defender – PAM (PAM-DEF) exam.</p>
   <p>Every fact was checked against the official <a href="https://docs.cyberark.com/pam-self-hosted/latest/en/content/landing%20pages/lpusermanagement.htm" target="_blank" rel="noopener">PAM Self-Hosted documentation</a>. Each question links to the page that proves its answer. The lab screens are simplified simulations modeled on the documented PrivateArk Client and PVWA screens. They aren't CyberArk software.</p>
   <p>This is an independent study aid, not affiliated with or endorsed by CyberArk.</p>
-  <p class="mut sm">${QB.length} fact families · ${VARIANT_COUNT} question variants · ${MISSIONS.length} lab missions. Progress is saved only in this browser.</p>
+  <p class="mut sm">${QB.length} fact families · ${VARIANT_COUNT} question variants · ${MISSIONS.length} lab missions.</p></div>
+  <div class="card lesson"><h2>Your progress</h2><p data-sync-status>${esc(window.SYNC ? SYNC.statusText() : "Progress is saved on this device.")}</p>
+  ${window.SYNC && SYNC.ready ? `<div class="row"><button class="btn ${SYNC.user ? "" : "pri"}" data-act="acct">${SYNC.user ? "Sign out" : "Sign in to sync"}</button>${SYNC.user ? `<button class="btn" data-act="syncnow">Sync now</button>` : ""}</div>` : `<p class="mut sm">Sign-in isn't available right now (offline or blocked). Use Export to keep a backup.</p>`}
   <div class="row"><button class="btn" data-act="export">Export progress</button><button class="btn" data-act="import">Import progress</button><button class="btn danger" data-act="reset">Reset all progress</button></div></div>`;
 };
 
@@ -513,14 +537,21 @@ const ACT = {
   efinish: () => examFinish(false),
   print: () => window.print(),
   theme: () => setTheme(document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark"),
-  reset: () => { if (confirm("Erase all progress in this browser? This cannot be undone.")) { localStorage.removeItem(LSKEY); location.hash = "#/home"; location.reload(); } },
+  acct: () => { if (!window.SYNC) return; SYNC.user ? SYNC.signOut() : SYNC.signIn(); },
+  syncnow: () => { SYNC.syncNow().then(() => SYNC.paint()); },
+  reset: async () => {
+    const signed = window.SYNC && SYNC.user;
+    if (!confirm(signed ? "Erase all progress on this device AND in your account? This cannot be undone." : "Erase all progress in this browser? This cannot be undone.")) return;
+    if (signed) await SYNC.wipe();
+    localStorage.removeItem(LSKEY); location.hash = "#/home"; location.reload();
+  },
   export: () => {
     const blob = new Blob([JSON.stringify(S)], { type: "application/json" }), a = document.createElement("a");
     a.href = URL.createObjectURL(blob); a.download = "user-management-lab-progress.json"; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   },
   import: () => {
     const inp = document.createElement("input"); inp.type = "file"; inp.accept = "application/json,.json";
-    inp.onchange = () => { const fr = new FileReader(); fr.onload = () => { try { const d = JSON.parse(fr.result); if (!d || typeof d !== "object" || !d.f) throw 0; S = d; save(); alert("Progress imported."); go("#/home"); } catch (e) { alert("That file isn't a progress export."); } }; fr.readAsText(inp.files[0]); };
+    inp.onchange = () => { const fr = new FileReader(); fr.onload = () => { try { const d = JSON.parse(fr.result); if (!d || typeof d !== "object" || !d.f) throw 0; S = mergeProgress(S, d); normalizeState(); save(); alert("Progress imported and merged with this device."); go("#/home"); } catch (e) { alert("That file isn't a progress export."); } }; fr.readAsText(inp.files[0]); };
     inp.click();
   }
 };
@@ -566,3 +597,4 @@ document.addEventListener("keydown", e => {
 /* ───────────── boot ───────────── */
 setTheme();
 route();
+if (window.SYNC) SYNC.init();

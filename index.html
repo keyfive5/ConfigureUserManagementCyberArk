@@ -15,7 +15,7 @@
   <nav class="tnav" aria-label="Main">
     <a href="#/learn">Learn</a><a href="#/drill">Drill</a><a href="#/lab">Lab</a><a href="#/exam">Ace Check</a><a href="#/sheet">Cheat sheet</a>
   </nav>
-  <div class="tr"><span id="rpill" class="pill">Readiness 0%</span><button class="iconbtn" data-act="theme" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button></div>
+  <div class="tr"><span id="rpill" class="pill">Readiness 0%</span><button id="acct" class="acct" data-act="acct" hidden aria-label="Sign in to sync progress"></button><button class="iconbtn" data-act="theme" aria-label="Toggle light/dark theme" title="Toggle theme">◐</button></div>
 </header>
 <main id="app" class="wrap" aria-live="polite"></main>
 <footer class="foot wrap">
@@ -26,6 +26,7 @@
 <script src="assets/lessons.js"></script>
 <script src="assets/questions.js"></script>
 <script src="assets/lab.js"></script>
+<script src="assets/sync.js"></script>
 <script src="assets/app.js"></script>
 </body>
 </html>

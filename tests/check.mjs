@@ -1,4 +1,4 @@
-// Content + engine checks for the User Management Lab. Zero dependencies.
+// Content + engine + sync checks for the User Management Lab. Zero dependencies.
 //   node tests/check.mjs          -> validates everything, exits 1 on any error
 //   node tests/check.mjs --shape  -> also prints the answer-length audit per question
 import fs from "node:fs";
@@ -16,7 +16,6 @@ vm.createContext(ctx);
 // Classic scripts share one global scope in the browser; join them so const/let carry across.
 const src = ["lessons.js", "questions.js", "lab.js"].map(f => fs.readFileSync(path.join(root, "assets", f), "utf8")).join("\n;\n");
 vm.runInContext(src + "\n;globalThis.__X={DOCS,REF,OBJECTIVES,LESSONS,QB,MISSIONS,baseState,AUTHS,UTYPES};", ctx);
-// lab.js calls esc/app/etc only at run time; give the check a tiny esc for check() messages.
 const { REF, OBJECTIVES, LESSONS, QB, MISSIONS, baseState, AUTHS } = ctx.__X;
 
 const errors = [], warns = [];
@@ -120,49 +119,110 @@ for (const m of MISSIONS) {
 }
 if (AUTHS.length !== 10) err(`expected 10 Vault authorizations, found ${AUTHS.length}`);
 
-/* ── engine: load the whole app against a tiny fake DOM, then render + grade every
-   variant with a correct and a wrong answer, and walk every route ── */
-{
+/* ── a tiny fake browser: just enough DOM plus a fake Puter SDK to run the real app ── */
+function makeBrowser({ local = {}, cloud = {}, signedIn = false } = {}) {
   const el = () => ({ innerHTML: "", textContent: "", className: "", hidden: false, value: "", disabled: false, style: {}, dataset: {},
     classList: { toggle: noop, add: noop, remove: noop }, addEventListener: noop, querySelector: () => null, querySelectorAll: () => [],
-    setAttribute: noop, getAttribute: () => "dark", scrollIntoView: noop, onchange: null, click: noop });
-  const store = {};
-  const dom = { console, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: noop, Date, Math, JSON, Set, Blob: class {}, URL: {},
+    setAttribute: noop, getAttribute: () => "dark", scrollIntoView: noop, onchange: null, click: noop, appendChild: noop });
+  const store = Object.assign({}, local);
+  const fake = { signedIn, cloud, sets: 0, failGet: false };
+  const puter = {
+    auth: { isSignedIn: () => fake.signedIn, signIn: async () => { fake.signedIn = true; }, getUser: async () => ({ username: "hasan" }), signOut: () => { fake.signedIn = false; } },
+    kv: { get: async k => { if (fake.failGet) throw new Error("offline"); return fake.cloud[k] ?? null; }, set: async (k, v) => { fake.sets++; fake.cloud[k] = v; return true; } }
+  };
+  const w = { console, setTimeout, clearTimeout, setInterval: () => 0, clearInterval: noop, Date, Math, JSON, Set, Map, Promise, Blob: class {}, URL: {},
     localStorage: { getItem: k => store[k] ?? null, setItem: (k, v) => { store[k] = String(v); }, removeItem: k => { delete store[k]; } },
-    matchMedia: () => ({ matches: false }), scrollTo: noop, confirm: () => false, alert: noop, addEventListener: noop, location: { hash: "#/home" },
-    document: { addEventListener: noop, documentElement: el(), getElementById: () => el(), querySelector: () => el(), querySelectorAll: () => [], createElement: el } };
-  dom.window = dom;
-  vm.createContext(dom);
-  const all = ["lessons.js", "questions.js", "lab.js", "app.js"].map(f => fs.readFileSync(path.join(root, "assets", f), "utf8")).join("\n;\n");
-  try {
-    vm.runInContext(all + `
-      ;globalThis.__E = (() => {
-        const bad = [];
-        for (const f of QB) f.v.forEach((v, i) => {
-          try {
-            const q = makeQ(f.id, i); qHtml(q, { mode: "drill", feedback: true });
-            if (q.y === "mc" || q.y === "multi") q.sel = q.perm.map((s, d) => v.a.includes(s) ? d : -1).filter(d => d >= 0);
-            else if (q.y === "tf") q.sel = [v.a ? 0 : 1];
-            else if (q.y === "order") q.order = v.o.map((_, k) => k);
-            else q.match = v.p.map((_, k) => k);
-            if (!answeredEnough(q) || !grade(q)) bad.push(f.id + "#" + i + ": correct answer not accepted");
-            q.answered = true; q.ok = true; qHtml(q, { mode: "drill", feedback: true });
-            const w = makeQ(f.id, i);
-            if (w.y === "mc" || w.y === "tf") w.sel = [w.perm.findIndex(s => w.y === "tf" ? s !== (v.a ? 0 : 1) : !v.a.includes(s))];
-            if (w.y === "multi") w.sel = [w.perm.findIndex(s => !v.a.includes(s))];
-            if (w.y === "match") w.match = v.p.map((_, k) => (k + 1) % v.p.length);
-            if (grade(w)) bad.push(f.id + "#" + i + ": a wrong answer was accepted");
-            w.answered = true; w.ok = false; qHtml(w, { mode: "review", feedback: true });
-          } catch (e) { bad.push(f.id + "#" + i + ": " + e.message); }
-        });
-        for (const h of ["#/home", "#/learn", "#/drill", "#/drill/O3", "#/drill/mis", "#/exam", "#/sheet", "#/about", "#/lab"].concat(OBJECTIVES.map(o => "#/learn/" + o.id), MISSIONS.map(m => "#/lab/" + m.id))) {
-          try { location.hash = h; route(); } catch (e) { bad.push("route " + h + ": " + e.message); }
-        }
-        return bad;
-      })();`, dom, { filename: "app-bundle.js" });
-    dom.__E.forEach(m => err("engine: " + m));
-  } catch (e) { err("app load/engine: " + e.message); }
+    matchMedia: () => ({ matches: false }), scrollTo: noop, confirm: () => true, alert: noop, addEventListener: noop, location: { hash: "#/home" }, puter,
+    document: { addEventListener: noop, visibilityState: "visible", head: el(), documentElement: el(), getElementById: () => el(), querySelector: () => el(), querySelectorAll: () => [], createElement: el } };
+  w.window = w;
+  vm.createContext(w);
+  const all = ["lessons.js", "questions.js", "lab.js", "sync.js", "app.js"].map(f => fs.readFileSync(path.join(root, "assets", f), "utf8")).join("\n;\n");
+  vm.runInContext(all + "\n;globalThis.__app = { get S() { return S; }, record, calibration, mergeProgress, SYNC, route, makeQ, qHtml, grade, answeredEnough, location };", w, { filename: "app-bundle.js" });
+  return { A: w.__app, fake, store };
 }
+const settle = () => new Promise(r => setTimeout(r, 5));
+
+/* ── engine: render + grade every variant with a correct and a wrong answer, walk every route ── */
+try {
+  const { A } = makeBrowser();
+  const { makeQ, qHtml, grade, answeredEnough, route, location } = A;
+  for (const f of QB) f.v.forEach((v, i) => {
+    const tag = f.id + "#" + i;
+    try {
+      const q = makeQ(f.id, i); qHtml(q, { mode: "drill", feedback: true });
+      if (q.y === "mc" || q.y === "multi") q.sel = q.perm.map((s, d) => v.a.includes(s) ? d : -1).filter(d => d >= 0);
+      else if (q.y === "tf") q.sel = [v.a ? 0 : 1];
+      else if (q.y === "order") q.order = v.o.map((_, k) => k);
+      else q.match = v.p.map((_, k) => k);
+      if (!answeredEnough(q) || !grade(q)) err(`engine: ${tag}: correct answer not accepted`);
+      q.answered = true; q.ok = true; qHtml(q, { mode: "drill", feedback: true });
+      const w = makeQ(f.id, i);
+      if (w.y === "mc" || w.y === "tf") w.sel = [w.perm.findIndex(s => w.y === "tf" ? s !== (v.a ? 0 : 1) : !v.a.includes(s))];
+      if (w.y === "multi") w.sel = [w.perm.findIndex(s => !v.a.includes(s))];
+      if (w.y === "match") w.match = v.p.map((_, k) => (k + 1) % v.p.length);
+      if (grade(w)) err(`engine: ${tag}: a wrong answer was accepted`);
+      w.answered = true; w.ok = false; qHtml(w, { mode: "review", feedback: true });
+    } catch (e) { err(`engine: ${tag}: ${e.message}`); }
+  });
+  for (const h of ["#/home", "#/learn", "#/drill", "#/drill/O3", "#/drill/mis", "#/exam", "#/sheet", "#/about", "#/lab"].concat(OBJECTIVES.map(o => "#/learn/" + o.id), MISSIONS.map(m => "#/lab/" + m.id))) {
+    try { location.hash = h; route(); } catch (e) { err(`engine: route ${h}: ${e.message}`); }
+  }
+} catch (e) { err("app load/engine: " + e.message); }
+
+/* ── sign-in sync: two devices' progress must merge, never overwrite ── */
+try {
+  const fam = QB.map(f => f.id);
+  const phone = { f: { [fam[0]]: { n: 4, c: 4, box: 3, lastTs: 2000, lastOk: true, okV: [1], mis: false, lastV: 1 } },
+    lessons: { O1: 500 }, lab: { M1: 600 }, exams: [{ when: 1000, score: 80, n: 30, correct: 24 }], calDev: { phone1: { sc: 5, sw: 1, uc: 0, uw: 0 } } };
+  const laptop = { f: { [fam[0]]: { n: 2, c: 1, box: 1, lastTs: 1000, lastOk: true, okV: [0], mis: false, lastV: 0 }, [fam[1]]: { n: 1, c: 1, box: 1, lastTs: 1500, lastOk: true, okV: [0], mis: false, lastV: 0 } },
+    lessons: { O2: 700 }, exams: [{ when: 3000, score: 90, n: 30, correct: 27 }], calDev: {}, theme: "light" };
+  const cloud = { umlab_state_v1: JSON.stringify(phone) };
+  const { A, fake } = makeBrowser({ local: { umlab_v1: JSON.stringify(laptop), umlab_dev: "laptop1" }, cloud });
+  await settle();
+  if (A.SYNC.user) err("sync: should start signed out");
+  if (fake.sets) err("sync: uploaded something before sign-in");
+  await A.SYNC.signIn();
+  const S1 = A.S;
+  if (!A.SYNC.user) err("sync: sign-in didn't take");
+  if (!(S1.lessons.O1 && S1.lessons.O2)) err("sync: lessons from both devices should survive the merge");
+  if (!S1.lab.M1) err("sync: lab missions from the cloud copy were lost");
+  if (S1.exams.length !== 2) err(`sync: expected 2 exams after merge, got ${S1.exams.length}`);
+  const m0 = S1.f[fam[0]];
+  if (!m0 || m0.box !== 3 || m0.lastTs !== 2000) err("sync: the most recent answer's streak should win for a shared fact");
+  if (!m0 || m0.okV.join() !== "0,1") err("sync: correct-wording history should be unioned");
+  if (!S1.f[fam[1]]) err("sync: a fact only answered on this device was lost");
+  if (!S1.calDev.phone1 || !S1.calDev.laptop1) err("sync: confidence counters from both devices should be kept");
+  if (S1.theme !== "light") err("sync: device-local theme should be kept");
+  const cloud1 = JSON.parse(cloud.umlab_state_v1);
+  if (!(cloud1.lessons.O1 && cloud1.lessons.O2) || cloud1.exams.length !== 2) err("sync: merged progress wasn't uploaded");
+  if ("theme" in cloud1) err("sync: device-local theme leaked into the cloud copy");
+  A.record(fam[2], 0, true, true);
+  await A.SYNC.flush();
+  if (!JSON.parse(cloud.umlab_state_v1).f[fam[2]]) err("sync: a new answer wasn't uploaded");
+  const cal = A.calibration();
+  if (cal.sure !== 7) err(`sync: calibration should add both devices' sure answers (expected 7, got ${cal.sure})`);
+  const before = fake.sets; fake.failGet = true;
+  await A.SYNC.syncNow();
+  if (fake.sets !== before) err("sync: uploaded even though reading the cloud copy failed (could overwrite data)");
+  fake.failGet = false;
+  // a second device that is already signed in picks everything up on load
+  const { A: B } = makeBrowser({ local: { umlab_dev: "tablet1" }, cloud, signedIn: true });
+  await settle(); await settle();
+  if (!B.SYNC.user) err("sync: an already-signed-in session wasn't restored on load");
+  if (!B.S.lessons.O1 || !B.S.f[fam[2]]) err("sync: a fresh device didn't receive the account's progress");
+  // reset while signed in also clears the cloud copy
+  await B.SYNC.wipe();
+  if (cloud.umlab_state_v1 !== "{}") err("sync: wipe didn't clear the cloud copy");
+  // merge laws
+  const M = A.mergeProgress, mm = M(phone, laptop), mm2 = M(laptop, phone);
+  const core = o => JSON.stringify({ f: o.f, lessons: o.lessons, lab: o.lab, exams: o.exams, calDev: o.calDev });
+  if (core(mm) !== core(mm2)) err("sync: merge isn't order-independent");
+  if (core(M(mm, mm)) !== core(mm)) err("sync: merging a state with itself changed it");
+  // a user with old-format progress (single S.cal counter) keeps it after the upgrade
+  const { A: C } = makeBrowser({ local: { umlab_v1: JSON.stringify({ f: {}, cal: { sc: 3, sw: 1, uc: 2, uw: 0 } }), umlab_dev: "old1" } });
+  const cc = C.calibration();
+  if (cc.sure !== 4 || cc.uns !== 2) err("sync: old confidence counters were lost in the upgrade");
+} catch (e) { err("sync test crashed: " + e.message); }
 
 /* ── report ── */
 const mcs = shape.filter(s => s.y === "mc");
